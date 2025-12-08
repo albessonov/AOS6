@@ -1,0 +1,31 @@
+
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C Debug",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/server",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+            "description": "Enable glibc source",
+            "text": "set directories /usr/src/glibc/glibc-2.35/",
+            "ignoreFailures": false
+        }, 
+        {
+            "description": "Enable pending breakpoints",
+            "text": "set breakpoint pending on",
+            "ignoreFailures": false
+        }
+      ],
+      "miDebuggerPath": "/usr/bin/gdb"
+    }
+  ]
+}
