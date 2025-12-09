@@ -67,10 +67,10 @@ struct Config read_config(const char *filename) {
             }
         }
         else if (strncmp(line, "shm_file", 7) == 0) {
-            sscanf(line + 7, "%s", &config.shm_file);
+            sscanf(line + 7, "%s", config.shm_file);
         }
         else if (strncmp(line, "sem_file", 7) == 0) {
-            sscanf(line + 7, "%s", &config.sem_file);
+            sscanf(line + 7, "%s", config.sem_file);
         }
         else {
             fprintf(stderr, "Config warning line %d: unknown parameter '%s'\n", line_num, line);
@@ -95,6 +95,7 @@ int find_repo(const char *name) {
 //создаем новый репозиторий
 struct Repository create_new_repo(char* repoName) {
     struct Repository new_repo;
+    memset(&new_repo, 0, sizeof(new_repo));  
     new_repo.create_time=time(NULL);
     new_repo.file_count=0;
     strncpy(new_repo.name,repoName,strlen(repoName));
@@ -102,7 +103,13 @@ struct Repository create_new_repo(char* repoName) {
     printf("new rep name:%s\n",new_repo.name);
     new_repo.number_of_commits=0;
     new_repo.version=0;
-    strncpy(new_repo.repo_path,"/tmp/vcs_repos",15);
+    strncpy(new_repo.repo_path,"/tmp/vcs_repos",MAX_REPO_PATH - 1);
+    new_repo.repo_path[MAX_REPO_PATH - 1] = '\0';
+    // Ensure all staging slots marked unused/empty (defensive)
+    for (int i = 0; i < MAX_STAGING_FILES; ++i) {
+        new_repo.staging[i].used = 0;
+        new_repo.staging[i].filename[0] = '\0';
+    }
     return new_repo;
 }
 void send_response(int client_sock, const char *format, ...) {
@@ -115,11 +122,4 @@ void send_response(int client_sock, const char *format, ...) {
     printf("%s", buffer);
     send(client_sock, buffer, strlen(buffer), 0);
 }
-unsigned int hash_func(const char *str) {
-    unsigned int hash = 0;
-    while (*str) {
-        hash = (hash * 31) + *str;
-        str++;
-    }
-    return hash;
-}
+

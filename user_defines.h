@@ -1,20 +1,29 @@
 #include <sys/types.h>
 #include <stdbool.h>
+#include <stdint.h>
 #define MAX_NAME_LEN 64
 #define MAX_REPOS 20
 #define MAX_STAGING_FILES 100
 #define MAX_REPO_PATH 512
 #define MAX_MESSAGE_LEN 512
 #define MAX_VERSIONS 127
+#define MAX_LOCKS 32    
 union semun {
     int val;
     struct semid_ds *buf;
     unsigned short *array;
 };
+struct FileLock { 
+    int lock_id; 
+    char filename[256]; 
+    char locked_by[64]; 
+    time_t locked_at; 
+    int lock_timeout; 
+    int used; 
+};
 struct FileVersion {
     int version_id;
     char filename[MAX_NAME_LEN];
-    unsigned hash;
     char author[MAX_NAME_LEN];
     char message[MAX_MESSAGE_LEN];
     time_t timestamp;
@@ -35,10 +44,14 @@ struct Repository  {
     unsigned number_of_commits;
     struct StagingFile staging[MAX_STAGING_FILES]; 
     time_t create_time;
+    uint8_t active_locks;
     bool used; //1 if current array idx is busy
 };
 struct MainStruct{
     struct Repository repositories[MAX_REPOS];
+    struct FileLock locks[MAX_LOCKS]; 
+    int lock_count; 
+    int next_lock_id; 
 };
 struct Config {
     int port;                   
@@ -52,3 +65,5 @@ int cmd_init(int client_sock,char* repoName);
 int cmd_add(int client_sock,char *repoName, char *filename);
 int cmd_commit(int client_sock,char *repoName, char* message, char* author);
 int cmd_log(int client_sock,char *repoName);
+int cmd_lock(int client_sock, char *repoName, char *filename, char *user);
+int cmd_unlock(int client_sock, char *repoName, char *filename, char *user);

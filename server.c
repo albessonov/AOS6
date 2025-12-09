@@ -44,7 +44,6 @@ void worker_loop(int worker_id) {
         while (1) {
             int ret = process_command(client_sock, worker_id);
             if (ret < 0) {
-                // Ошибка или клиент отключился
                 printf("INFO Worker %d: client disconnected\n", worker_id);
                 break;
             }
@@ -54,7 +53,7 @@ void worker_loop(int worker_id) {
     }
 }
 int process_command(int client_sock, int worker_id) {
-    char buffer[2048];  // Увеличим буфер для безопасности
+    char buffer[2048];  
     int total_bytes = 0;
     
     // Читаем команду (может быть многострочная из-за файлов!)
@@ -120,7 +119,19 @@ int process_command(int client_sock, int worker_id) {
         }
         char* author = strtok(NULL, " ");
         result = cmd_commit(client_sock, repoName, message, author);
-    } 
+    }
+    else if (strcmp(cmd_name, "LOCK") == 0) {
+        char* reponame = strtok(NULL, " ");
+        char* filename = strtok(NULL, " ");
+        char* user = strtok(NULL, " ");
+        result = cmd_lock(client_sock, reponame,filename,user);
+    }
+    else if (strcmp(cmd_name, "UNLOCK") == 0) {
+        char* reponame = strtok(NULL, " ");
+        char* filename = strtok(NULL, " ");
+        char* user = strtok(NULL, " ");
+        result = cmd_unlock(client_sock, reponame,filename,user);
+    }   
     else {
         send_response(client_sock, "ERROR: Unknown command '%s'", cmd_name);
         printf("ERROR: Unknown command '%s'\n", cmd_name);
@@ -143,8 +154,8 @@ int main(int argc, char **argv){
     if(logfd<0){
         perror("open");
     }
-    dup2(logfd,STDOUT_FILENO);
-    dup2(logfd,STDERR_FILENO);
+    //dup2(logfd,STDOUT_FILENO);
+    //dup2(logfd,STDERR_FILENO);
     
     key_t key_sem = ftok("/tmp", 'A');
     sem_id = semget(key_sem, 1, 0666 | IPC_CREAT);
@@ -245,16 +256,14 @@ int cmd_init(int client_sock,char* repoName) {
         send_response(client_sock, "No repo name");
         return -1;
     }
-    // Проверяем, существует ли репозиторий
-    sem_lock(MUTEX);
-    int repo_idx = find_repo(repoName);
     
+    int repo_idx = find_repo(repoName);
+    sem_lock(MUTEX);
     if (repo_idx >= 0) {
         send_response(client_sock, "ERROR: Repository '%s' already exists", repoName); 
         sem_release(MUTEX);
         return -1;
     }
-    sem_lock(MUTEX);
     int new_repo_idx = -1;
     for (int i = 0; i < MAX_REPOS; i++) {
         if (!mainstr->repositories[i].used) {
@@ -271,8 +280,8 @@ int cmd_init(int client_sock,char* repoName) {
         send_response(client_sock, "ERROR: Maximum repositories reached (%d)", MAX_REPOS);
         return -1;
     }
-    char* path;
-    sprintf(path,"/tmp/vcs_repos/%s",repoName);
+    char path[MAX_REPO_PATH];
+    snprintf(path,sizeof(path),"/tmp/vcs_repos/%s",repoName);
     mkdir(path,0777);
     send_response(client_sock, "OK: Repository '%s' created (ID: %d)", repoName, new_repo_idx);
     return 0;
@@ -317,12 +326,11 @@ int cmd_add(int client_sock,char *repoName, char *filename) {
         send_response(client_sock, "ERROR: Staging area full");
         return -1;
     }
-    
+    sem_release(MUTEX);
     send_response(client_sock, "OK: '%s' registered in staging (slot %d)", filename, staging_idx);
     return 0;
 }
 int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
-    
     if (!repoName || !message || !author) {
         send_response(client_sock, "ERROR: Missing repo_name, message or author");
         return -1;
@@ -339,10 +347,15 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
         sem_release(MUTEX);
         return -1;
     }
-    
+
+    if (mainstr->repositories[repo_idx].active_locks > 0) {
+        sem_release(MUTEX);
+        send_response(client_sock, "ERROR: Some files are locked");
+        return -1;
+    }
     // создаём директорию
     int local_version_id = mainstr->repositories[repo_idx].version++;
-    char version_dir[MAX_REPO_PATH];
+    char version_dir[MAX_REPO_PATH+10]; //для выравнивания
     snprintf(version_dir, sizeof(version_dir), "%s/%s/v%d/",mainstr->repositories[repo_idx].repo_path, repoName, local_version_id);
     mkdir(version_dir, 0755);
     
@@ -370,9 +383,9 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
             long file_size = atol(size_buf);
             
             // сохраняем файл 
-            char file_path[MAX_REPO_PATH];
+            char file_path[MAX_REPO_PATH+MAX_NAME_LEN+10]; //для выравнивания
             snprintf(file_path, sizeof(file_path), "%s/%s", version_dir, filename);
-            FILE *f = fopen(file_path, "wb");
+            FILE *f = fopen(file_path, "wb"); //BINARY
             
             if (f) {
                 char buf[4096];
@@ -398,7 +411,6 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
     for (int i = 0; i < MAX_VERSIONS; i++) {
         if (!mainstr->repositories[repo_idx].versions[i].used) {
             version_idx = i;
-            mainstr->repositories[repo_idx].versions[version_idx].hash = 0xFFFFFFFF;
             mainstr->repositories[repo_idx].versions[version_idx].version_id = local_version_id;
             strncpy(mainstr->repositories[repo_idx].versions[version_idx].filename, "commit_bundle", MAX_NAME_LEN-1);
             strncpy(mainstr->repositories[repo_idx].versions[version_idx].author, author, MAX_NAME_LEN-1);
@@ -444,5 +456,111 @@ int cmd_log(int client_sock, char * repoName){
     }
     sem_release(MUTEX);
     send_response(client_sock,resp);
+    return 0;
+}
+int cmd_lock(int client_sock, char *repoName, char *filename, char *user) {
+  
+    if (!repoName || !filename || !user) {
+        send_response(client_sock, "ERROR: Missing repo_name, filename or user");
+        return -1;
+    }
+
+    int repo_idx = find_repo(repoName);
+    if (repo_idx < 0) {
+        send_response(client_sock, "ERROR: Repository '%s' not found", repoName);
+        return -1;
+    }
+
+    sem_lock(SEM_LOCK_MANAGER);
+
+    int existing_idx = -1;
+    for (int i = 0; i < MAX_LOCKS; i++) {
+        if (mainstr->locks[i].used && strcmp(mainstr->locks[i].filename, filename) == 0) {
+            existing_idx = i;
+            break;
+        }
+    }
+
+    if (existing_idx >= 0) {
+        const char *owner = mainstr->locks[existing_idx].locked_by; //уже заблочен
+        sem_release(SEM_LOCK_MANAGER);
+        send_response(client_sock, "ERROR: File '%s' already locked by '%s'", filename, owner);
+        return -1;
+    }
+    int free_idx = -1;
+    for (int i = 0; i < MAX_LOCKS; i++) {
+        if (!mainstr->locks[i].used) {
+            free_idx = i;
+            break;
+        }
+    }
+    if (free_idx < 0) {
+        sem_release(SEM_LOCK_MANAGER);;
+        send_response(client_sock, "ERROR: No free lock slots");
+        return -1;
+    }
+    int lock_id = mainstr->next_lock_id++;
+    mainstr->locks[free_idx].lock_id = lock_id;
+    strncpy(mainstr->locks[free_idx].filename,filename,sizeof(mainstr->locks[free_idx].filename) - 1);
+    strncpy(mainstr->locks[free_idx].locked_by, user,sizeof(mainstr->locks[free_idx].locked_by) - 1);
+    mainstr->locks[free_idx].locked_at = time(NULL);
+    mainstr->locks[free_idx].lock_timeout= config.lock_timeout;
+    mainstr->locks[free_idx].used = 1;
+    mainstr->lock_count++;
+
+    sem_release(SEM_LOCK_MANAGER);
+
+    sem_lock(MUTEX);
+    mainstr->repositories[repo_idx].active_locks++;
+    sem_release(MUTEX);
+
+    send_response(client_sock, "OK: File '%s' locked by '%s' (lock_id=%d, timeout=%d)",filename, user, lock_id, config.lock_timeout);
+    return 0;
+}
+int cmd_unlock(int client_sock, char *repoName, char *filename, char *user) {
+    if (!repoName || !filename || !user) {
+        send_response(client_sock, "ERROR: Missing repo_name, filename or user");
+        return -1;
+    }
+    int repo_idx = find_repo(repoName);
+
+    if (repo_idx < 0) {
+        send_response(client_sock, "ERROR: Repository '%s' not found", repoName);
+        return -1;
+    }
+
+    sem_lock(SEM_LOCK_MANAGER);
+
+    int lock_idx = -1;
+    for (int i = 0; i < MAX_LOCKS; i++) {
+        if (mainstr->locks[i].used && strcmp(mainstr->locks[i].filename, filename) == 0) {
+            lock_idx = i;
+            break;
+        }
+    }
+
+    if (lock_idx < 0) {
+        sem_release(SEM_LOCK_MANAGER);
+        send_response(client_sock, "ERROR: File '%s' is not locked", filename);
+        return -1;
+    }
+
+    if (strcmp(mainstr->locks[lock_idx].locked_by, user) != 0) {
+        const char *owner = mainstr->locks[lock_idx].locked_by;
+        sem_release(SEM_LOCK_MANAGER);
+        send_response(client_sock,"ERROR: Lock on '%s' belongs to '%s', not '%s'",filename, owner, user);
+        return -1;
+    }
+
+    memset(&mainstr->locks[lock_idx], 0, sizeof(struct FileLock));
+    mainstr->lock_count--;
+    sem_release(SEM_LOCK_MANAGER);
+
+    sem_lock(MUTEX);
+    if (mainstr->repositories[repo_idx].active_locks > 0)
+        mainstr->repositories[repo_idx].active_locks--;
+    sem_release(MUTEX);
+
+    send_response(client_sock, "OK: File '%s' unlocked by '%s'", filename, user);
     return 0;
 }

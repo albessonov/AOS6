@@ -1,4 +1,5 @@
 #define MUTEX 0
+#define SEM_LOCK_MANAGER 1
 int sem_lock(int sem_num);
 int sem_release(int sem_num);
 int find_repo(const char *name);

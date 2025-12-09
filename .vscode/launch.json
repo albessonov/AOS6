@@ -7,7 +7,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/server",
-      "args": [],
+      "args": ["config.conf"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],

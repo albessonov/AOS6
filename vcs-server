@@ -1,5 +1,5 @@
-serv sock main: 4
-INFO Spawned worker 0 (PID 139903)
+bind: Address already in use
+d worker 0 (PID 139903)
 INFO Worker 0 (PID 139903) started
 INFO Spawned worker 1 (PID 139915)
 INFO Worker 1 (PID 139915) started
