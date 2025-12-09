@@ -19,89 +19,27 @@
 struct MainStruct* mainstr;
 int sem_id = -1;
 int server_sock;
+static struct Config config;
 extern int errno;
 static pid_t *workers = NULL;
 static struct Config config;  
 static int running = 1;
 static int client_sock;//temporary
-int read_config(const char *filename) {
-    FILE *f = fopen(filename, "r");
-    if (!f) {
-        perror("fopen config");
-        // Используем значения по умолчанию
-        config.port = 9999;
-        config.max_workers = 4;
-        config.lock_timeout = 300;
-        strncpy(config.logfile, "vcs-server", sizeof(config.logfile));
-        config.shm_file = "/tmp";
-        config.sem_file = "/tmp";
-        return 0;  // Не фатальная ошибка
-    }
-    
-    char line[256];
-    int line_num = 0;
-    while (fgets(line, sizeof(line), f)) {
-        line_num++;
-        line[strcspn(line, "\n")] = 0;  // Убираем \n
-        
-        // Пропускаем комментарии и пустые строки
-        if (line[0] == '#' || line[0] == '\0') continue;
-        
-        // Парсим параметры
-        if (strncmp(line, "port", 4) == 0) {
-            if (sscanf(line + 4, "%d", &config.port) != 1 || config.port <= 0 || config.port > 65535) {
-                fprintf(stderr, "Config error line %d: invalid port\n", line_num);
-                config.port = 9999;
-            }
-        }
-        else if (strncmp(line, "logfile", 7) == 0) {
-            sscanf(line + 7, "%s", config.logfile);
-        }
-        else if (strncmp(line, "max_workers", 11) == 0) {
-            if (sscanf(line + 11, "%d", &config.max_workers) != 1 || config.max_workers <= 0 || config.max_workers > 32) {
-                fprintf(stderr, "Config error line %d: invalid max_workers\n", line_num);
-                config.max_workers = 4;
-            }
-        }
-        else if (strncmp(line, "lock_timeout", 12) == 0) {
-            if (sscanf(line + 12, "%d", &config.lock_timeout) != 1 || config.lock_timeout < 30) {
-                fprintf(stderr, "Config error line %d: invalid lock_timeout\n", line_num);
-                config.lock_timeout = 300;
-            }
-        }
-        else if (strncmp(line, "shm_file", 7) == 0) {
-            sscanf(line + 7, "%d", &config.shm_file);
-        }
-        else if (strncmp(line, "sem_file", 7) == 0) {
-            sscanf(line + 7, "%d", &config.sem_file);
-        }
-        else {
-            fprintf(stderr, "Config warning line %d: unknown parameter '%s'\n", line_num, line);
-        }
-    }
-    fclose(f);
-    
-    printf("INFO Config loaded: port=%d workers=%d timeout=%ds\n", config.port, config.max_workers, config.lock_timeout);
-    return 0;
-}
+
 void worker_loop(int worker_id) {
     printf("INFO Worker %d (PID %d) started\n", worker_id, getpid());
-    
     while (running) {
         struct sockaddr_in client_addr;
         socklen_t addr_len = sizeof(client_addr);
-        
         client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &addr_len);
         if (client_sock < 0) {
             if (running) perror("accept");
             sleep(1);
             continue;
         }
-        
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
         printf("INFO Worker %d: client %s: %dF connected\n", worker_id, client_ip, ntohs(client_addr.sin_port));
-        
         while (1) {
             int ret = process_command(client_sock, worker_id);
             if (ret < 0) {
@@ -110,7 +48,6 @@ void worker_loop(int worker_id) {
                 break;
             }
         }
-        
         close(client_sock);
         printf("INFO Worker %d: connection closed\n", worker_id);
     }
@@ -160,11 +97,17 @@ int process_command(int client_sock, int worker_id) {
     if (strcmp(cmd_name, "INIT") == 0) {
         char* reponame = strtok(NULL, " ");
         result = cmd_init(client_sock, reponame);
-    } else if (strcmp(cmd_name, "ADD") == 0) {
+    } 
+    else if (strcmp(cmd_name, "ADD") == 0) {
         char* reponame = strtok(NULL, " ");
         char* filename = strtok(NULL, " ");
         result = cmd_add(client_sock, reponame, filename);
-    } else if (strcmp(cmd_name, "COMMIT") == 0) {
+    }
+    else if (strcmp(cmd_name, "LOG") == 0) {
+        char* reponame = strtok(NULL, " ");
+        result = cmd_log(client_sock, reponame);
+    }  
+    else if (strcmp(cmd_name, "COMMIT") == 0) {
         char *repoName = strtok(NULL, " ");
         char* message = strtok(NULL, "\"");  // Берем сообщение в кавычках
         if (message) {
@@ -176,7 +119,8 @@ int process_command(int client_sock, int worker_id) {
         }
         char* author = strtok(NULL, " ");
         result = cmd_commit(client_sock, repoName, message, author);
-    } else {
+    } 
+    else {
         send_response(client_sock, "ERROR: Unknown command '%s'", cmd_name);
         printf("ERROR: Unknown command '%s'\n", cmd_name);
         return 0;
@@ -192,12 +136,13 @@ int process_command(int client_sock, int worker_id) {
 }
 
 int main(int argc, char **argv){
+    config=read_config(argv[1]);
     key_t key_sem = ftok("/tmp", 'A');
-    int semid = semget(key_sem, 1, 0666 | IPC_CREAT); // Создаем 1 семафор
+    sem_id = semget(key_sem, 1, 0666 | IPC_CREAT); // Создаем 1 семафор
 
-    struct sembuf arg;
-    arg.sem_op = 0; // Начальное значение семафора = 0
-    semctl(semid, 0, SETVAL, arg);
+    union semun arg;  // Правильный тип
+    arg.val = 1;      // Устанавливаем значение 0
+    semctl(sem_id, 0, SETVAL, arg);
 
     key_t key_mem = ftok("/",'S');
     int shmid = shmget(key_mem,sizeof(struct MainStruct),IPC_CREAT|0666);
@@ -222,7 +167,7 @@ int main(int argc, char **argv){
     setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(5555);
+    addr.sin_port = htons(config.port);
     addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("bind");
@@ -238,7 +183,7 @@ int main(int argc, char **argv){
         perror("calloc workers");
         return 1;
     }
-
+    mkdir("/tmp/vcs_repos",0777);
     /*config.max_workers = 1; //temporary
     for (int i = 0; i < config.max_workers; i++) {
         spawn_worker(i);
@@ -295,24 +240,19 @@ void spawn_worker(int worker_id) {
 
 int cmd_init(int client_sock,char* repoName) {
     if (!repoName || strlen(repoName) == 0) {
-        send_response(client_sock, "POSOSI.");
+        send_response(client_sock, "No repo name");
         return -1;
     }
     // Проверяем, существует ли репозиторий
     sem_lock(MUTEX);
-    int repo_idx = -1;
-    for (int i = 0; i < MAX_REPOS; i++) {
-        if (mainstr->repositories[i].used && strcmp(mainstr->repositories[i].name, repoName) == 0) {
-            repo_idx = i; //реп существует
-            break;
-        }
-    }
+    int repo_idx = find_repo(repoName);
     
     if (repo_idx >= 0) {
         send_response(client_sock, "ERROR: Repository '%s' already exists", repoName); 
         sem_release(MUTEX);
         return -1;
     }
+    sem_lock(MUTEX);
     int new_repo_idx = -1;
     for (int i = 0; i < MAX_REPOS; i++) {
         if (!mainstr->repositories[i].used) {
@@ -329,7 +269,9 @@ int cmd_init(int client_sock,char* repoName) {
         send_response(client_sock, "ERROR: Maximum repositories reached (%d)", MAX_REPOS);
         return -1;
     }
-    
+    char* path;
+    sprintf(path,"/tmp/vcs_repos/%s",repoName);
+    mkdir(path,0777);
     send_response(client_sock, "OK: Repository '%s' created (ID: %d)", repoName, new_repo_idx);
     return 0;
     
@@ -383,21 +325,12 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
         send_response(client_sock, "ERROR: Missing repo_name, message or author");
         return -1;
     }
-    
-    sem_lock(MUTEX);
-    int repo_idx = -1;
-    for (int i = 0; i < MAX_REPOS; i++) {
-        if (mainstr->repositories[i].used && strcmp(mainstr->repositories[i].name, repoName) == 0) {
-            repo_idx = i;
-            break;
-        }
-    }
-
+    int repo_idx = find_repo(repoName);
     if (repo_idx < 0) {
         send_response(client_sock, "ERROR: Repository '%s' not found", repoName);
-        sem_release(MUTEX);
         return -1;
     }
+    sem_lock(MUTEX);
     
     if (mainstr->repositories[repo_idx].file_count == 0) {
         send_response(client_sock, "ERROR: No files in staging area");
@@ -408,7 +341,7 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
     // 1. Создаём директорию версии
     int local_version_id = mainstr->repositories[repo_idx].version++;
     char version_dir[MAX_REPO_PATH];
-    snprintf(version_dir, sizeof(version_dir), "%s/repo_%s/v%d/",mainstr->repositories[repo_idx].repo_path, repoName, local_version_id);
+    snprintf(version_dir, sizeof(version_dir), "%s/%s/v%d/",mainstr->repositories[repo_idx].repo_path, repoName, local_version_id);
     mkdir(version_dir, 0755);
     
     // 2. Клиенту: "Готовь файлы!"
@@ -464,7 +397,6 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
     for (int i = 0; i < MAX_VERSIONS; i++) {
         if (!mainstr->repositories[repo_idx].versions[i].used) {
             version_idx = i;
-            //generate_hash(mainstr->repositories[repo_idx].versions[version_idx].hash);
             mainstr->repositories[repo_idx].versions[version_idx].hash = 0xFFFFFFFF;
             mainstr->repositories[repo_idx].versions[version_idx].version_id = local_version_id;
             strncpy(mainstr->repositories[repo_idx].versions[version_idx].filename, "commit_bundle", MAX_NAME_LEN-1);
@@ -487,5 +419,28 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
     
     sem_release(MUTEX);    
     send_response(client_sock, "COMMIT_OK: Version %d created (%d files, %ld bytes)", local_version_id, files_committed, total_size);
+    return 0;
+}
+int cmd_log(int client_sock, char * repoName){
+    if (!repoName) {
+        send_response(client_sock, "ERROR: Missing repo name");
+        return -1;
+    }
+    int repo_idx = find_repo(repoName);
+    if (repo_idx < 0) {
+        send_response(client_sock, "ERROR: Repository '%s' not found", repoName);
+        return -1;
+    }
+    sem_lock(MUTEX);
+    int commit_count = mainstr->repositories[repo_idx].number_of_commits;
+    char resp[commit_count*(MAX_MESSAGE_LEN+MAX_NAME_LEN+1)];
+    resp[0] = '\0'; 
+    for(int i = 0;i<commit_count;i++){
+        char string[MAX_MESSAGE_LEN+MAX_NAME_LEN+1+50];//для выравнивания
+        sprintf(string,"Commit number %d. Author:%s. Commit message:%s\n",i,mainstr->repositories[repo_idx].versions[i].author,mainstr->repositories[repo_idx].versions[i].message);
+        strcat(resp,string);
+    }
+    sem_release(MUTEX);
+    send_response(client_sock,resp);
     return 0;
 }

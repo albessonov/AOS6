@@ -1,4 +1,4 @@
-// client.c — поддержка всех команд + ADD/COMMIT с файлами
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,7 +68,6 @@ void simple_command(const char *host, int port, const char *command) {
     if (sock < 0) return;
     
     send_command(sock, "%s", command);
-    printf("command sent\n");
     receive_response(sock);
     close(sock);
 }
@@ -125,7 +124,6 @@ void cmd_commit_files(const char *host, int port, const char *repo,
     }
     
     // 2. Отправляем COMMIT
-    sleep(1);
     printf("Sending COMMIT command...\n");
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "COMMIT %s \"%s\" %s", repo, message, author);
@@ -220,7 +218,16 @@ void cmd_commit_files(const char *host, int port, const char *repo,
     
     close(sock);
 }
-
+void cmd_log(const char *host, int port,char *repoName){
+    int sock = connect_to_server(host, port);
+    if (sock < 0) return;
+    
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "LOG %s", repoName);
+    send_command(sock, "%s", cmd);
+    receive_response(sock);
+    close(sock);  
+} 
 // ==================== MAIN ====================
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -253,7 +260,10 @@ int main(int argc, char *argv[]) {
         }
         
         cmd_commit_files(host, port, repo, message, author, filenames, num_files);
-    } 
+    }
+    if (strcmp(argv[1], "log") == 0 && argc == 5) {
+        cmd_log(host, port, argv[4]);
+    }  
     else if (argc >= 4) {
         host=argv[1];
         port=atoi(argv[2]);

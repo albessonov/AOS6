@@ -6,6 +6,11 @@
 #define MAX_REPO_PATH 512
 #define MAX_MESSAGE_LEN 512
 #define MAX_VERSIONS 127
+union semun {
+    int val;
+    struct semid_ds *buf;
+    unsigned short *array;
+};
 struct FileVersion {
     int version_id;
     char filename[MAX_NAME_LEN];
@@ -46,3 +51,4 @@ struct Config {
 int cmd_init(int client_sock,char* repoName);
 int cmd_add(int client_sock,char *repoName, char *filename);
 int cmd_commit(int client_sock,char *repoName, char* message, char* author);
+int cmd_log(int client_sock,char *repoName);
