@@ -1,0 +1,21 @@
+serv sock main: 4
+INFO Spawned worker 0 (PID 139903)
+INFO Worker 0 (PID 139903) started
+INFO Spawned worker 1 (PID 139915)
+INFO Worker 1 (PID 139915) started
+INFO Spawned worker 2 (PID 139950)
+INFO Worker 2 (PID 139950) started
+INFO Spawned worker 3 (PID 139968)
+INFO Worker 3 (PID 139968) started
+INFO Server fully started with 4 workers
+INFO Worker 0: client 127.0.0.1: 44052F connected
+COMMAND Worker 0 received: 'LOG myrepo'
+Commit number 0. Author:client. Commit message:Initial
+Commit number 1. Author:client. Commit message:Initial
+Commit number 2. Author:client. Commit message:Initial
+Commit number 3. Author:client. Commit message:Initial
+Commit number 4. Author:client. Commit message:Initial
+
+SUCCESS Command 'LOG' completed by worker 0
+INFO Worker 0: client disconnected
+INFO Worker 0: connection closed

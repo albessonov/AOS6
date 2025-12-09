@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <sys/errno.h>
 #include "helpers.h"
+#include <fcntl.h>
 struct MainStruct* mainstr;
 int sem_id = -1;
 int server_sock;
@@ -137,11 +138,19 @@ int process_command(int client_sock, int worker_id) {
 
 int main(int argc, char **argv){
     config=read_config(argv[1]);
+    //логирование
+    int logfd=open(config.logfile,O_WRONLY|O_CREAT,0666);
+    if(logfd<0){
+        perror("open");
+    }
+    dup2(logfd,STDOUT_FILENO);
+    dup2(logfd,STDERR_FILENO);
+    
     key_t key_sem = ftok("/tmp", 'A');
-    sem_id = semget(key_sem, 1, 0666 | IPC_CREAT); // Создаем 1 семафор
+    sem_id = semget(key_sem, 1, 0666 | IPC_CREAT);
 
-    union semun arg;  // Правильный тип
-    arg.val = 1;      // Устанавливаем значение 0
+    union semun arg; 
+    arg.val = 1;      
     semctl(sem_id, 0, SETVAL, arg);
 
     key_t key_mem = ftok("/",'S');
@@ -184,19 +193,14 @@ int main(int argc, char **argv){
         return 1;
     }
     mkdir("/tmp/vcs_repos",0777);
-    /*config.max_workers = 1; //temporary
     for (int i = 0; i < config.max_workers; i++) {
         spawn_worker(i);
-        sleep(1);  // Даём время на запуск
-    }*/
-    worker_loop(1);
+        sleep(1);  // даём время на запуск
+    }
     printf("INFO Server fully started with %d workers\n", config.max_workers);
     
-    // 8. ОСНОВНОЙ ЦИКЛ MASTER'а
     while (running) {
-        sleep(5);  // Проверяем каждые 5 секунд
-        
-        // Проверяем живые worker'ы
+        sleep(5); 
         int alive_workers = 0;
         for (int i = 0; i < config.max_workers; i++) {
             if (workers[i] > 0) {
@@ -225,12 +229,10 @@ int main(int argc, char **argv){
 }
 void spawn_worker(int worker_id) {
     pid_t pid = fork();
-    if (pid == 0) {
-        // Child — worker process
-        //close(server_sock);  // Workers НЕ слушают!
+    if (pid == 0) { //child-worker
         worker_loop(worker_id);
         exit(0);
-    } else if (pid > 0) {
+    } else if (pid > 0) { //master
         workers[worker_id] = pid;
         printf("INFO Spawned worker %d (PID %d)\n", worker_id, pid);
     } else {
@@ -338,16 +340,16 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
         return -1;
     }
     
-    // 1. Создаём директорию версии
+    // создаём директорию
     int local_version_id = mainstr->repositories[repo_idx].version++;
     char version_dir[MAX_REPO_PATH];
     snprintf(version_dir, sizeof(version_dir), "%s/%s/v%d/",mainstr->repositories[repo_idx].repo_path, repoName, local_version_id);
     mkdir(version_dir, 0755);
     
-    // 2. Клиенту: "Готовь файлы!"
+    // отправляем старт коммит
     send_response(client_sock, "COMMIT_START: %d files, version %d",mainstr->repositories[repo_idx].file_count, local_version_id);
     
-    // 3. Подгружаем КАЖДЫЙ файл из staging
+    // подгружаем  из staging
     long total_size = 0;
     int files_committed = 0;
     
@@ -356,7 +358,7 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
             char filename[MAX_NAME_LEN];
             strncpy(filename, mainstr->repositories[repo_idx].staging[j].filename, MAX_NAME_LEN);
             
-            // Запрашиваем файл у клиента
+            // запрашиваем файл
             char request[512];
             snprintf(request, sizeof(request), "NEED_FILE %s\n", filename);
             send(client_sock, request, strlen(request), 0);
@@ -367,7 +369,7 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
             size_buf[strcspn(size_buf, "\n")] = 0;
             long file_size = atol(size_buf);
             
-            // Сохраняем файл СРАЗУ в версию
+            // сохраняем файл 
             char file_path[MAX_REPO_PATH];
             snprintf(file_path, sizeof(file_path), "%s/%s", version_dir, filename);
             FILE *f = fopen(file_path, "wb");
@@ -392,7 +394,6 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
         }
     }
     
-    // 4. Создаём запись версии
     int version_idx = -1;
     for (int i = 0; i < MAX_VERSIONS; i++) {
         if (!mainstr->repositories[repo_idx].versions[i].used) {
@@ -410,7 +411,7 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
         }
     }
     
-    // 5. Очищаем staging и обновляем статистику
+    //очищаем staging и обновляем статистику
     for (int j = 0; j < MAX_STAGING_FILES; j++) {
         mainstr->repositories[repo_idx].staging[j].used = 0;
     }
@@ -432,11 +433,12 @@ int cmd_log(int client_sock, char * repoName){
         return -1;
     }
     sem_lock(MUTEX);
+    sleep(5);
     int commit_count = mainstr->repositories[repo_idx].number_of_commits;
     char resp[commit_count*(MAX_MESSAGE_LEN+MAX_NAME_LEN+1)];
     resp[0] = '\0'; 
     for(int i = 0;i<commit_count;i++){
-        char string[MAX_MESSAGE_LEN+MAX_NAME_LEN+1+50];//для выравнивания
+        char string[MAX_MESSAGE_LEN+MAX_NAME_LEN+1+50];//для выравнивания областей
         sprintf(string,"Commit number %d. Author:%s. Commit message:%s\n",i,mainstr->repositories[repo_idx].versions[i].author,mainstr->repositories[repo_idx].versions[i].message);
         strcat(resp,string);
     }
