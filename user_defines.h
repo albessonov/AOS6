@@ -57,14 +57,6 @@ struct Config {
     int port;                   
     char logfile[256];      
     int max_workers;             
-    int lock_timeout;            
-    char* shm_file;                 
-    char* sem_file;                
+    int lock_timeout;                          
 };
-int cmd_init(int client_sock,char* repoName);
-int cmd_add(int client_sock,char *repoName, char *filename);
-int cmd_commit(int client_sock,char *repoName, char* message, char* author);
-int cmd_log(int client_sock,char *repoName);
-int cmd_lock(int client_sock, char *repoName, char *filename, char *user);
-int cmd_unlock(int client_sock, char *repoName, char *filename, char *user);
-int cmd_show(int client_sock, char *repoName,int version_id) ;
+

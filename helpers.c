@@ -9,12 +9,51 @@
 #include <stdio.h>
 extern int sem_id;
 extern struct MainStruct *mainstr; 
-//забираем семафор
+void cleanup_expired_locks(void) {
+    time_t now = time(NULL);
+
+    sem_lock(SEM_LOCK_MANAGER);
+
+    for (int i = 0; i < MAX_LOCKS; i++) {
+        if (!mainstr->locks[i].used) continue;
+
+        time_t locked_at = mainstr->locks[i].locked_at;
+        int timeout_sec = mainstr->locks[i].lock_timeout;
+
+        if (now - locked_at >= timeout_sec) {
+    
+            char expired_file[MAX_REPO_PATH];
+            strncpy(expired_file, mainstr->locks[i].filename, sizeof(expired_file) - 1);
+            expired_file[sizeof(expired_file) - 1] = '\0';
+
+            printf("INFO Expired lock %d on '%s' by '%s' (timeout %d s) removed\n",mainstr->locks[i].lock_id, mainstr->locks[i].filename,mainstr->locks[i].locked_by,timeout_sec);
+
+            mainstr->locks[i].used = 0;
+            mainstr->lock_count--;
+
+            sem_release(SEM_LOCK_MANAGER);
+            sem_lock(MUTEX);
+
+            for (int r = 0; r < MAX_REPOS; r++) {
+                if (!mainstr->repositories[r].used)
+                    continue;
+                if (mainstr->repositories[r].active_locks > 0) {
+                    mainstr->repositories[r].active_locks--;
+                    break;
+                }
+            }
+
+            sem_release(MUTEX);
+            sem_lock(SEM_LOCK_MANAGER);
+        }
+    }
+
+    sem_release(SEM_LOCK_MANAGER);
+}
 int sem_lock(int sem_num) {
     struct sembuf op = {sem_num, -1, 0};
     return semop(sem_id, &op, 1);
 }
-// высвобождаем семафор
 int sem_release(int sem_num) {
     struct sembuf op = {sem_num, 1, 0};
     return semop(sem_id, &op, 1);
@@ -25,26 +64,21 @@ struct Config read_config(const char *filename) {
     FILE *f = fopen(filename, "r");
     if (!f) {
         perror("fopen config");
-        // Используем значения по умолчанию
         config.port = 9999;
         config.max_workers = 4;
         config.lock_timeout = 300;
         strncpy(config.logfile, "vcs-server", sizeof(config.logfile));
-        config.shm_file = "/tmp";
-        config.sem_file = "/tmp";
-        return config;  // Не фатальная ошибка
+        return config;  
     }
     
     char line[256];
     int line_num = 0;
     while (fgets(line, sizeof(line), f)) {
         line_num++;
-        line[strcspn(line, "\n")] = 0;  // Убираем \n
+        line[strcspn(line, "\n")] = 0;  
         
-        // Пропускаем комментарии и пустые строки
-        if (line[0] == '#' || line[0] == '\0') continue;
+        if (line[0] == '#' || line[0] == '\0') continue; //комм
         
-        // Парсим параметры
         if (strncmp(line, "port", 4) == 0) {
             if (sscanf(line + 4, "%d", &config.port) != 1 || config.port <= 0 || config.port > 65535) {
                 fprintf(stderr, "Config error line %d: invalid port\n", line_num);
@@ -61,16 +95,10 @@ struct Config read_config(const char *filename) {
             }
         }
         else if (strncmp(line, "lock_timeout", 12) == 0) {
-            if (sscanf(line + 12, "%d", &config.lock_timeout) != 1 || config.lock_timeout < 30) {
+            if (sscanf(line + 12, "%d", &config.lock_timeout) != 1 ) {
                 fprintf(stderr, "Config error line %d: invalid lock_timeout\n", line_num);
-                config.lock_timeout = 300;
+                config.lock_timeout = 111;
             }
-        }
-        else if (strncmp(line, "shm_file", 7) == 0) {
-            sscanf(line + 7, "%s", config.shm_file);
-        }
-        else if (strncmp(line, "sem_file", 7) == 0) {
-            sscanf(line + 7, "%s", config.sem_file);
         }
         else {
             fprintf(stderr, "Config warning line %d: unknown parameter '%s'\n", line_num, line);
@@ -92,7 +120,6 @@ int find_repo(const char *name) {
     sem_release(MUTEX);
     return -1;
 }
-//создаем новый репозиторий
 struct Repository create_new_repo(char* repoName) {
     struct Repository new_repo;
     memset(&new_repo, 0, sizeof(new_repo));  
@@ -105,11 +132,6 @@ struct Repository create_new_repo(char* repoName) {
     new_repo.version=0;
     strncpy(new_repo.repo_path,"/tmp/vcs_repos",MAX_REPO_PATH - 1);
     new_repo.repo_path[MAX_REPO_PATH - 1] = '\0';
-    // Ensure all staging slots marked unused/empty (defensive)
-    for (int i = 0; i < MAX_STAGING_FILES; ++i) {
-        new_repo.staging[i].used = 0;
-        new_repo.staging[i].filename[0] = '\0';
-    }
     return new_repo;
 }
 void send_response(int client_sock, const char *format, ...) {

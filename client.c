@@ -69,7 +69,6 @@ void cmd_init(const char *host, int port, const char *repo_name) {
     receive_response(sock);
     close(sock);
 }
-// ==================== ADD (только регистрация) ====================
 void cmd_add(const char *host, int port, const char *repo, const char *filename) {
     int sock = connect_to_server(host, port);
     if (sock < 0) return;
@@ -92,18 +91,15 @@ void cmd_show(const char *host, int port, const char *repo, int version_id) {
     
     int n;
     while ((n = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[n] = '\0'; // гарантируем, что строка завершена
-        // Разделяем буфер на строки
+        buffer[n] = '\0'; 
         char *line = strtok(buffer, "\n");
         while (line != NULL) {
-            // Если встречаем пустую строку, выходим из цикла
             if (strlen(line) == 0) {
                 break;
             }
             printf("  %s\n", line);
             line = strtok(NULL, "\n");
         }
-        // Если в процессе разбора встретили пустую строку, выходим из внешнего цикла
         if (line != NULL && strlen(line) == 0) {
             break;
         }
@@ -145,13 +141,13 @@ void cmd_commit_files(const char *host, int port, const char *repo,  const char 
         }
     }
     
-    // 2. Отправляем COMMIT
+    // отправляем COMMIT
     printf("Sending COMMIT command...\n");
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "COMMIT %s \"%s\" %s", repo, message, author);
     send_command(sock, "%s", cmd);
     
-    // 3. Получаем COMMIT_START
+    //COMMIT_START
     char buffer[BUFFER_SIZE];
     int res = recv(sock, buffer, sizeof(buffer) - 1, 0);
     if(res<0){
@@ -172,10 +168,9 @@ void cmd_commit_files(const char *host, int port, const char *repo,  const char 
         return;
     }
     
-    // 4. Отправляем каждый файл по запросу сервера
     int files_to_send = num_files;
     while (files_to_send > 0) {
-        // Ждём NEED_FILE filename
+        //NEED_FILE filename
         int bytes = recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes <= 0) break;
         
@@ -186,21 +181,20 @@ void cmd_commit_files(const char *host, int port, const char *repo,  const char 
             char needed_file[256];
             sscanf(buffer, "NEED_FILE %s", needed_file);
             
-            // Ищем запрошенный файл в нашем списке
             int file_found = 0;
             for (int i = 0; i < num_files; i++) {
                 if (strcmp(needed_file, filenames[i]) == 0) {
                     printf("Sending %s...\n", filenames[i]);
                     file_found = 1;
                     
-                    // Отправляем размер
+                    // отправляем размер
                     struct stat st;
                     if (stat(filenames[i], &st) == 0) {
                         char size_str[32];
                         snprintf(size_str, sizeof(size_str), "%ld\n", (long)st.st_size);
                         send(sock, size_str, strlen(size_str), 0);
                         
-                        // Отправляем содержимое
+                        //отправляем содержимое
                         int fd = open(filenames[i], O_RDONLY);
                         if (fd >= 0) {
                             char buf[4096];
@@ -218,7 +212,6 @@ void cmd_commit_files(const char *host, int port, const char *repo,  const char 
             
             if (!file_found) {
                 fprintf(stderr, "Requested file not found: %s\n", needed_file);
-                // Отправляем 0 размер, чтобы сервер пропустил этот файл
                 send(sock, "0\n", 2, 0);
             }
             
@@ -227,15 +220,11 @@ void cmd_commit_files(const char *host, int port, const char *repo,  const char 
             buffer[strcspn(buffer, "\n")] = '\0';
             printf("Server: %s\n", buffer);
         }
-        else if (strncmp(buffer, "COMMIT_OK", 9) == 0 || 
-                 strncmp(buffer, "ERROR", 5) == 0) {
-            // Сервер завершил commit
+        else if (strncmp(buffer, "COMMIT_OK", 9) == 0 || strncmp(buffer, "ERROR", 5) == 0) { //
             printf("Server: %s\n", buffer);
             break;
         }
     }
-    
-    // 5. Финальный результат
     recv(sock, buffer, sizeof(buffer) - 1, 0);
     buffer[strcspn(buffer, "\n")] = '\0';
     printf("=== COMMIT RESULT ===\n");
@@ -313,7 +302,6 @@ void cmd_lock(const char *host, int port, const char *repo, const char *filename
     close(sock);
 }
 
-// ==================== UNLOCK ====================
 void cmd_unlock(const char *host, int port, const char *repo, const char *filename, const char *user) {
     int sock = connect_to_server(host, port);
     if (sock < 0) return;

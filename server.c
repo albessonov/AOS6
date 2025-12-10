@@ -17,8 +17,9 @@
 #include <sys/errno.h>
 #include "helpers.h"
 #include <fcntl.h>
+#include <signal.h>
 struct MainStruct* mainstr;
-int sem_id = -1;
+int sem_id = -1,shm_id=-1;
 int server_sock;
 static struct Config config;
 extern int errno;
@@ -26,6 +27,62 @@ static pid_t *workers = NULL;
 static struct Config config;  
 static int running = 1;
 static int client_sock;//temporary
+int cmd_init(int client_sock,char* repoName);
+int cmd_add(int client_sock,char *repoName, char *filename);
+int cmd_commit(int client_sock,char *repoName, char* message, char* author);
+int cmd_log(int client_sock,char *repoName);
+int cmd_lock(int client_sock, char *repoName, char *filename, char *user);
+int cmd_unlock(int client_sock, char *repoName, char *filename, char *user);
+int cmd_show(int client_sock, char *repoName,int version_id);
+void sigint_sigterm_handler(int sig) {
+    printf("INFO  Starting cleanup...\n");
+    running = 0;
+    sleep(1);
+    for (int i = 0; i < config.max_workers && workers; i++) {
+        if (workers[i] > 0) {
+            kill(workers[i], SIGTERM);
+        }
+    }
+    for (int wait = 0; wait < 5; wait++) {
+        int alive = 0;
+        for (int i = 0; i < config.max_workers; i++) {
+            if (workers[i] > 0 && kill(workers[i], 0) == 0) {
+                alive++;
+            }
+        }
+        if (alive == 0) break;
+        sleep(1);
+    }
+    if (server_sock >= 0) {
+        close(server_sock);
+        server_sock = -1;
+    }
+    
+    if (mainstr && shm_id >= 0) {
+        printf("INFO Detaching SHM %d\n", shm_id);
+        if (shmdt(mainstr) < 0) {
+            perror("shmdt");
+        }
+        mainstr = NULL;
+        
+        printf("INFO Removing SHM %d\n", shm_id);
+        if (shmctl(shm_id, IPC_RMID, NULL) < 0) {
+            perror("shmctl IPC_RMID");
+        }
+        shm_id = -1;
+    }
+    
+    if (sem_id >= 0) {
+        printf("INFO Removing semaphores %d\n", sem_id);
+        if (semctl(sem_id, 0, IPC_RMID, 0) < 0) {
+            perror("semctl IPC_RMID");
+        }
+        sem_id = -1;
+    }
+    
+    printf("INFO Cleanup completed successfully\n");
+    exit(0);
+}
 
 void worker_loop(int worker_id) {
     printf("INFO Worker %d (PID %d) started\n", worker_id, getpid());
@@ -56,12 +113,10 @@ int process_command(int client_sock, int worker_id) {
     char buffer[2048];  
     int total_bytes = 0;
     
-    // Читаем команду (может быть многострочная из-за файлов!)
     while (total_bytes < sizeof(buffer) - 1) {
         ssize_t bytes = recv(client_sock, buffer + total_bytes, sizeof(buffer) - total_bytes - 1, 0);
         if (bytes <= 0) {
             if (bytes == 0) {
-                // Клиент отключился
                 return -1;
             }
             perror("recv");
@@ -69,7 +124,6 @@ int process_command(int client_sock, int worker_id) {
         }
         
         total_bytes += bytes;
-        // Ищем конец команды (новую строку)
         buffer[total_bytes] = '\0';
         if (strchr(buffer, '\n') != NULL) {
             break;
@@ -77,22 +131,20 @@ int process_command(int client_sock, int worker_id) {
     }
     
     if (total_bytes == 0) {
-        return -1;  // Пустое соединение
+        return -1;  
     }
     
-    // Убираем \n и парсим
+    // нбираем \n и парсим
     buffer[strcspn(buffer, "\n")] = '\0';
     
     printf("COMMAND Worker %d received: '%s'\n", worker_id, buffer);
     
-    // Разбор команды
     char *cmd_name = strtok(buffer, " \t");
     if (!cmd_name) {
         send_response(client_sock, "ERROR: Empty command");
-        return 0;  // Продолжаем ждать команды
+        return 0;  // ждем еще
     }
     
-    // ДИСПЕТЧЕР КОМАНД
     int result = 0;
     if (strcmp(cmd_name, "INIT") == 0) {
         char* reponame = strtok(NULL, " ");
@@ -108,15 +160,8 @@ int process_command(int client_sock, int worker_id) {
         result = cmd_log(client_sock, reponame);
     }  
     else if (strcmp(cmd_name, "COMMIT") == 0) {
-        char *repoName = strtok(NULL, " ");
-        char* message = strtok(NULL, "\"");  // Берем сообщение в кавычках
-        if (message) {
-            // Убираем открывающую кавычку, если есть
-            if (message[0] == '"') message++;
-            // Ищем закрывающую кавычку
-            char *end_quote = strchr(message, '"');
-            if (end_quote) *end_quote = '\0';
-        }
+        char* repoName = strtok(NULL, " ");
+        char* message = strtok(NULL, " ");  
         char* author = strtok(NULL, " ");
         result = cmd_commit(client_sock, repoName, message, author);
     }
@@ -145,11 +190,11 @@ int process_command(int client_sock, int worker_id) {
     
     if (result == 0) {
         printf("SUCCESS Command '%s' completed by worker %d\n", cmd_name, worker_id);
-    } else {
+    } 
+    else {
         printf("ERROR Command '%s' failed (worker %d)\n", cmd_name, worker_id);
     }
-    
-    return 0;  // Продолжаем обрабатывать команды
+    return 0; 
 }
 
 int main(int argc, char **argv){
@@ -161,22 +206,19 @@ int main(int argc, char **argv){
     }
     //dup2(logfd,STDOUT_FILENO);
     //dup2(logfd,STDERR_FILENO);
-    
-    key_t key_sem = ftok("/tmp", 'A');
-    sem_id = semget(key_sem, 1, 0666 | IPC_CREAT);
+    sem_id = semget(IPC_EXCL, 1, 0666 | IPC_CREAT);
 
     union semun arg; 
     arg.val = 1;      
     semctl(sem_id, 0, SETVAL, arg);
 
-    key_t key_mem = ftok("/",'S');
-    int shmid = shmget(key_mem,sizeof(struct MainStruct),IPC_CREAT|0666);
-    if (shmid == -1) {
+    shm_id = shmget(IPC_EXCL,sizeof(struct MainStruct),IPC_CREAT|0666);
+    if (shm_id == -1) {
         perror("shmget");
         exit(1);
     }
     
-    mainstr= shmat(shmid, NULL, 0);
+    mainstr= shmat(shm_id, NULL, 0);
     if (mainstr == (struct MainStruct *)(-1)) {
         perror("shmat");
         exit(1);
@@ -213,6 +255,10 @@ int main(int argc, char **argv){
         spawn_worker(i);
         sleep(1);  // даём время на запуск
     }
+    signal(SIGINT,sigint_sigterm_handler);
+    signal(SIGTERM,sigint_sigterm_handler);
+
+
     printf("INFO Server fully started with %d workers\n", config.max_workers);
     
     while (running) {
@@ -228,10 +274,7 @@ int main(int argc, char **argv){
                 }
             }
         }
-        
-        // Удаляем истёкшие блокировки
-        //cleanup_expired_locks();
-        
+        cleanup_expired_locks();
         if (alive_workers == 0) {
             printf("ERROR No alive workers, restarting all\n");
             for (int i = 0; i < config.max_workers; i++) {
@@ -239,7 +282,6 @@ int main(int argc, char **argv){
             }
         }
     }
-
     printf("INFO Master process exiting\n");
     return 0;
 }
@@ -248,10 +290,12 @@ void spawn_worker(int worker_id) {
     if (pid == 0) { //child-worker
         worker_loop(worker_id);
         exit(0);
-    } else if (pid > 0) { //master
+    } 
+    else if (pid > 0) { //master
         workers[worker_id] = pid;
         printf("INFO Spawned worker %d (PID %d)\n", worker_id, pid);
-    } else {
+    } 
+    else {
         perror("fork");
     }
 }
@@ -261,7 +305,6 @@ int cmd_init(int client_sock,char* repoName) {
         send_response(client_sock, "No repo name");
         return -1;
     }
-    
     int repo_idx = find_repo(repoName);
     sem_lock(MUTEX);
     if (repo_idx >= 0) {
@@ -315,7 +358,6 @@ int cmd_add(int client_sock,char *repoName, char *filename) {
             return -1;
         }
     }
-    
     int staging_idx = -1;
     for (int j = 0; j < MAX_STAGING_FILES; j++) {
         if (!mainstr->repositories[repo_idx].staging[j].used) {
@@ -396,7 +438,7 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
                 char buf[4096];
                 size_t received = 0;
                 while (received < file_size) {
-                    ssize_t bytes = recv(client_sock, buf, sizeof(buf), 0);
+                    size_t bytes = recv(client_sock, buf, sizeof(buf), 0);
                     if (bytes <= 0) break;
                     fwrite(buf, 1, bytes, f);
                     received += bytes;
@@ -406,7 +448,8 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
                 files_committed++;
                 
                 send_response(client_sock, "FILE_OK: %s (%ld bytes)", filename, received);
-            } else {
+            } 
+            else {
                 send_response(client_sock, "FILE_ERROR: %s", filename);
             }
         }
@@ -511,7 +554,6 @@ int cmd_lock(int client_sock, char *repoName, char *filename, char *user) {
     mainstr->locks[free_idx].lock_timeout= config.lock_timeout;
     mainstr->locks[free_idx].used = 1;
     mainstr->lock_count++;
-
     sem_release(SEM_LOCK_MANAGER);
 
     sem_lock(MUTEX);
@@ -594,7 +636,7 @@ int cmd_show(int client_sock, char *repoName,int version_id) {
         send_response(client_sock, "ERROR: Version %d not found in repo '%s'", version_id, repoName);
         return -1;
     }
-    char response[MAX_MESSAGE_LEN+MAX_NAME_LEN+68];
+    char response[MAX_MESSAGE_LEN+MAX_NAME_LEN+81];
     snprintf(response, sizeof(response),
         "OK: Version #%d in '%s'\n"
         " Author: %s\n"
@@ -608,9 +650,9 @@ int cmd_show(int client_sock, char *repoName,int version_id) {
         found_version->author,
         found_version->message,
         ctime(&found_version->timestamp),
-        //total_size,
+        //total_size
         found_version->parent_version_id
-        //files_list[0] ? files_list : "none");
+        //files;
 );
     send_response(client_sock,response);
     
