@@ -67,3 +67,4 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author);
 int cmd_log(int client_sock,char *repoName);
 int cmd_lock(int client_sock, char *repoName, char *filename, char *user);
 int cmd_unlock(int client_sock, char *repoName, char *filename, char *user);
+int cmd_show(int client_sock, char *repoName,int version_id) ;

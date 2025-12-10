@@ -12,7 +12,8 @@
 #include <stdarg.h>
 #include <errno.h>
 #define BUFFER_SIZE 4096
-
+void cmd_lock(const char *host, int port, const char *repo, const char *filename, const char *user);
+void cmd_unlock(const char *host, int port, const char *repo, const char *filename, const char *user);
 int connect_to_server(const char *host, int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -79,7 +80,37 @@ void cmd_add(const char *host, int port, const char *repo, const char *filename)
     receive_response(sock);
     close(sock);
 }
-
+void cmd_show(const char *host, int port, const char *repo, int version_id) {
+    int sock = connect_to_server(host, port);
+    if (sock < 0) return;
+    
+    send_command(sock, "SHOW %s %d", repo, version_id);
+    
+    // Читаем весь многострочный ответ
+    char buffer[BUFFER_SIZE];
+    printf("SHOW %s %d:\n", repo, version_id);
+    
+    int n;
+    while ((n = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[n] = '\0'; // гарантируем, что строка завершена
+        // Разделяем буфер на строки
+        char *line = strtok(buffer, "\n");
+        while (line != NULL) {
+            // Если встречаем пустую строку, выходим из цикла
+            if (strlen(line) == 0) {
+                break;
+            }
+            printf("  %s\n", line);
+            line = strtok(NULL, "\n");
+        }
+        // Если в процессе разбора встретили пустую строку, выходим из внешнего цикла
+        if (line != NULL && strlen(line) == 0) {
+            break;
+        }
+    }
+    
+    close(sock);
+}
 void cmd_commit_files(const char *host, int port, const char *repo,  const char *message, const char *author, char *filenames[], int num_files) {
     int sock = connect_to_server(host, port);
     if (sock < 0) return;
@@ -222,7 +253,6 @@ void cmd_log(const char *host, int port,char *repoName){
     receive_response(sock);
     close(sock);  
 } 
-// ==================== MAIN ====================
 int main(int argc, char *argv[]) {
         if (argc < 2) {
         printf("Usage:\n");
@@ -250,6 +280,9 @@ int main(int argc, char *argv[]) {
     }
     else if (strcmp(argv[1], "unlock") == 0 && argc == 7) {
         cmd_unlock(host, port, argv[4], argv[5], argv[6]);
+    }
+    else if (strcmp(argv[1], "show") == 0 && argc == 6) {
+        cmd_show(host, port, argv[4], atoi(argv[5]));
     }
     else if (strcmp(argv[1], "commit") == 0 && argc >= 8) {
         char *repo = argv[4];

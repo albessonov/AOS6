@@ -131,7 +131,12 @@ int process_command(int client_sock, int worker_id) {
         char* filename = strtok(NULL, " ");
         char* user = strtok(NULL, " ");
         result = cmd_unlock(client_sock, reponame,filename,user);
-    }   
+    }
+    else if (strcmp(cmd_name, "SHOW") == 0) {
+        char* reponame = strtok(NULL, " ");
+        int version_id=atoi(strtok(NULL, " "));
+        result = cmd_show(client_sock, reponame,version_id);
+    }    
     else {
         send_response(client_sock, "ERROR: Unknown command '%s'", cmd_name);
         printf("ERROR: Unknown command '%s'\n", cmd_name);
@@ -445,7 +450,6 @@ int cmd_log(int client_sock, char * repoName){
         return -1;
     }
     sem_lock(MUTEX);
-    sleep(5);
     int commit_count = mainstr->repositories[repo_idx].number_of_commits;
     char resp[commit_count*(MAX_MESSAGE_LEN+MAX_NAME_LEN+1)];
     resp[0] = '\0'; 
@@ -562,5 +566,53 @@ int cmd_unlock(int client_sock, char *repoName, char *filename, char *user) {
     sem_release(MUTEX);
 
     send_response(client_sock, "OK: File '%s' unlocked by '%s'", filename, user);
+    return 0;
+}
+int cmd_show(int client_sock, char *repoName,int version_id) {
+    
+    if (!repoName || version_id<0) {
+        send_response(client_sock, "ERROR: Missing repo_name or wrong version_id");
+        return -1;
+    }
+    int repo_idx = find_repo(repoName);
+    if (repo_idx<0) {
+        send_response(client_sock, "ERROR: Missing repository not found");
+        return -1;
+    }
+    // 1. НАХОДИМ версию в массиве versions[]
+    sem_lock(MUTEX);
+    struct FileVersion *found_version = NULL;
+    for (int i = 0; i < MAX_VERSIONS; i++) {
+        if (mainstr->repositories[repo_idx].versions[i].used && mainstr->repositories[repo_idx].versions[i].version_id == version_id ) {  
+            found_version = &mainstr->repositories[repo_idx].versions[i];
+            break;
+        }
+    }
+    sem_release(MUTEX);
+    
+    if (!found_version) {
+        send_response(client_sock, "ERROR: Version %d not found in repo '%s'", version_id, repoName);
+        return -1;
+    }
+    char response[MAX_MESSAGE_LEN+MAX_NAME_LEN+68];
+    snprintf(response, sizeof(response),
+        "OK: Version #%d in '%s'\n"
+        " Author: %s\n"
+        " Message: %s\n"
+        " Timestamp: %s\n"
+        //"  Total size: %d bytes\n"
+        " Parent: %d\n",
+        //"  Files: %s",
+        version_id, 
+        repoName,
+        found_version->author,
+        found_version->message,
+        ctime(&found_version->timestamp),
+        //total_size,
+        found_version->parent_version_id
+        //files_list[0] ? files_list : "none");
+);
+    send_response(client_sock,response);
+    
     return 0;
 }
