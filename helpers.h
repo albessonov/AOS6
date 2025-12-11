@@ -9,3 +9,4 @@ unsigned int hash_func(const char *str) ;
 int process_command(int client_sock, int worker_id);
 void spawn_worker(int worker_id);
 struct Config read_config(const char *filename);
+void cleanup_expired_locks(void);

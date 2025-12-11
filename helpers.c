@@ -30,8 +30,6 @@ void cleanup_expired_locks(void) {
 
             mainstr->locks[i].used = 0;
             mainstr->lock_count--;
-
-            sem_release(SEM_LOCK_MANAGER);
             sem_lock(MUTEX);
 
             for (int r = 0; r < MAX_REPOS; r++) {
@@ -44,7 +42,6 @@ void cleanup_expired_locks(void) {
             }
 
             sem_release(MUTEX);
-            sem_lock(SEM_LOCK_MANAGER);
         }
     }
 
@@ -127,7 +124,6 @@ struct Repository create_new_repo(char* repoName) {
     new_repo.file_count=0;
     strncpy(new_repo.name,repoName,strlen(repoName));
     new_repo.name[strlen(repoName)] = '\0';
-    printf("new rep name:%s\n",new_repo.name);
     new_repo.number_of_commits=0;
     new_repo.version=0;
     strncpy(new_repo.repo_path,"/tmp/vcs_repos",MAX_REPO_PATH - 1);

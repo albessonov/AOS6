@@ -12,8 +12,6 @@
 #include <stdarg.h>
 #include <errno.h>
 #define BUFFER_SIZE 4096
-void cmd_lock(const char *host, int port, const char *repo, const char *filename, const char *user);
-void cmd_unlock(const char *host, int port, const char *repo, const char *filename, const char *user);
 int connect_to_server(const char *host, int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -82,29 +80,10 @@ void cmd_add(const char *host, int port, const char *repo, const char *filename)
 void cmd_show(const char *host, int port, const char *repo, int version_id) {
     int sock = connect_to_server(host, port);
     if (sock < 0) return;
-    
     send_command(sock, "SHOW %s %d", repo, version_id);
-    
-    // Читаем весь многострочный ответ
     char buffer[BUFFER_SIZE];
     printf("SHOW %s %d:\n", repo, version_id);
-    
-    int n;
-    while ((n = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[n] = '\0'; 
-        char *line = strtok(buffer, "\n");
-        while (line != NULL) {
-            if (strlen(line) == 0) {
-                break;
-            }
-            printf("  %s\n", line);
-            line = strtok(NULL, "\n");
-        }
-        if (line != NULL && strlen(line) == 0) {
-            break;
-        }
-    }
-    
+    receive_response(sock);
     close(sock);
 }
 void cmd_commit_files(const char *host, int port, const char *repo,  const char *message, const char *author, char *filenames[], int num_files) {
@@ -215,7 +194,7 @@ void cmd_commit_files(const char *host, int port, const char *repo,  const char 
                 send(sock, "0\n", 2, 0);
             }
             
-            // Получаем подтверждение
+            // ack
             recv(sock, buffer, sizeof(buffer) - 1, 0);
             buffer[strcspn(buffer, "\n")] = '\0';
             printf("Server: %s\n", buffer);
@@ -242,6 +221,22 @@ void cmd_log(const char *host, int port,char *repoName){
     receive_response(sock);
     close(sock);  
 } 
+void cmd_lock(const char *host, int port, const char *repo, const char *filename, const char *user) {
+    int sock = connect_to_server(host, port);
+    if (sock < 0) return;
+    send_command(sock, "LOCK %s %s %s", repo, filename, user);
+    receive_response(sock);
+    close(sock);
+}
+
+void cmd_unlock(const char *host, int port, const char *repo, const char *filename, const char *user) {
+    int sock = connect_to_server(host, port);
+    if (sock < 0) return;
+    
+    send_command(sock, "UNLOCK %s %s %s", repo, filename, user);
+    receive_response(sock);
+    close(sock);
+}
 int main(int argc, char *argv[]) {
         if (argc < 2) {
         printf("Usage:\n");
@@ -276,7 +271,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[1], "commit") == 0 && argc >= 8) {
         char *repo = argv[4];
         char *message = argv[5];
-        char *author = argv[7];
+        char *author = argv[6];
         int num_files = argc - 7;
         char *filenames[32];
         
@@ -293,20 +288,4 @@ int main(int argc, char *argv[]) {
         printf("Invalid command or arguments.\n");
     }
     return 0;
-}
-void cmd_lock(const char *host, int port, const char *repo, const char *filename, const char *user) {
-    int sock = connect_to_server(host, port);
-    if (sock < 0) return;
-    send_command(sock, "LOCK %s %s %s", repo, filename, user);
-    receive_response(sock);
-    close(sock);
-}
-
-void cmd_unlock(const char *host, int port, const char *repo, const char *filename, const char *user) {
-    int sock = connect_to_server(host, port);
-    if (sock < 0) return;
-    
-    send_command(sock, "UNLOCK %s %s %s", repo, filename, user);
-    receive_response(sock);
-    close(sock);
 }

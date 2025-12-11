@@ -97,7 +97,7 @@ void worker_loop(int worker_id) {
         }
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-        printf("INFO Worker %d: client %s: %dF connected\n", worker_id, client_ip, ntohs(client_addr.sin_port));
+        printf("INFO Worker %d: client %s: %d connected\n", worker_id, client_ip, ntohs(client_addr.sin_port));
         while (1) {
             int ret = process_command(client_sock, worker_id);
             if (ret < 0) {
@@ -206,12 +206,12 @@ int main(int argc, char **argv){
     }
     //dup2(logfd,STDOUT_FILENO);
     //dup2(logfd,STDERR_FILENO);
-    sem_id = semget(IPC_EXCL, 1, 0666 | IPC_CREAT);
+    sem_id = semget(IPC_EXCL, 2, 0666 | IPC_CREAT);
 
     union semun arg; 
     arg.val = 1;      
     semctl(sem_id, 0, SETVAL, arg);
-
+    semctl(sem_id, 1, SETVAL, arg);
     shm_id = shmget(IPC_EXCL,sizeof(struct MainStruct),IPC_CREAT|0666);
     if (shm_id == -1) {
         perror("shmget");
@@ -320,7 +320,6 @@ int cmd_init(int client_sock,char* repoName) {
             mainstr->repositories[i].used = true;
             break;
         }
-        else mainstr->repositories[i].used = false;
     }
     sem_release(MUTEX);
     
@@ -342,7 +341,7 @@ int cmd_add(int client_sock,char *repoName, char *filename) {
         return -1;
     }
     
-    // 1. НАХОДИМ репозиторий
+    // НАходим реп
     int repo_idx = find_repo(repoName);
     sem_lock(MUTEX);
     if (repo_idx < 0) {
@@ -350,7 +349,7 @@ int cmd_add(int client_sock,char *repoName, char *filename) {
         sem_release(MUTEX);
         return -1;
     }
-    // 2. ПРОВЕРЯЕМ staging area — файл уже есть?
+    // check staging
     for (int j = 0; j < MAX_STAGING_FILES; j++) {
         if (mainstr->repositories[repo_idx].staging[j].used && strcmp(mainstr->repositories[repo_idx].staging[j].filename, filename) == 0) {
             sem_release(MUTEX);
@@ -379,7 +378,7 @@ int cmd_add(int client_sock,char *repoName, char *filename) {
 }
 int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
     if (!repoName || !message || !author) {
-        send_response(client_sock, "ERROR: Missing repo_name, message or author");
+        send_response(client_sock, "ERROR: Missing repo name, message or author");
         return -1;
     }
     int repo_idx = find_repo(repoName);
@@ -432,7 +431,7 @@ int cmd_commit(int client_sock,char *repoName, char* message, char* author) {
             // сохраняем файл 
             char file_path[MAX_REPO_PATH+MAX_NAME_LEN+10]; //для выравнивания
             snprintf(file_path, sizeof(file_path), "%s/%s", version_dir, filename);
-            FILE *f = fopen(file_path, "wb"); //BINARY
+            FILE *f = fopen(file_path, "w"); 
             
             if (f) {
                 char buf[4096];
@@ -621,7 +620,7 @@ int cmd_show(int client_sock, char *repoName,int version_id) {
         send_response(client_sock, "ERROR: Missing repository not found");
         return -1;
     }
-    // 1. НАХОДИМ версию в массиве versions[]
+    // ищем версию 
     sem_lock(MUTEX);
     struct FileVersion *found_version = NULL;
     for (int i = 0; i < MAX_VERSIONS; i++) {
