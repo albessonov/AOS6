@@ -1,4 +1,4 @@
- #include <sys/stat.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -20,13 +20,14 @@
 #include <signal.h>
 struct MainStruct* mainstr;
 int sem_id = -1,shm_id=-1;
-int server_sock;
+static int server_sock;
 static struct Config config;
 extern int errno;
 static pid_t *workers = NULL;
 static struct Config config;  
 static int running = 1;
 static int client_sock;//temporary
+char* configFile;
 int cmd_init(int client_sock,char* repoName);
 int cmd_add(int client_sock,char *repoName, char *filename);
 int cmd_commit(int client_sock,char *repoName, char* message, char* author);
@@ -198,96 +199,102 @@ int process_command(int client_sock, int worker_id) {
 }
 
 int main(int argc, char **argv){
-    config=read_config(argv[1]);
-    //логирование
-    int logfd=open(config.logfile,O_WRONLY|O_CREAT,0666);
-    if(logfd<0){
-        perror("open");
-    }
-    //dup2(logfd,STDOUT_FILENO);
-    //dup2(logfd,STDERR_FILENO);
-    sem_id = semget(IPC_EXCL, 2, 0666 | IPC_CREAT);
-
-    union semun arg; 
-    arg.val = 1;      
-    semctl(sem_id, 0, SETVAL, arg);
-    semctl(sem_id, 1, SETVAL, arg);
-    shm_id = shmget(IPC_EXCL,sizeof(struct MainStruct),IPC_CREAT|0666);
-    if (shm_id == -1) {
-        perror("shmget");
-        exit(1);
-    }
-    
-    mainstr= shmat(shm_id, NULL, 0);
-    if (mainstr == (struct MainStruct *)(-1)) {
-        perror("shmat");
-        exit(1);
-    }
-
-    struct sockaddr_in addr;
-    server_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_sock < 0) {
-        perror("socket");
-        return 1;
-    }
-    int opt = 1;
-    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(config.port);
-    addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        return 1;
-    }
-    if (listen(server_sock, 10) < 0) {
-        perror("listen");
-        return 1;
-    }
-    printf("serv sock main: %d\n",server_sock);
-    workers = calloc(config.max_workers, sizeof(pid_t));
-    if (!workers) {
-        perror("calloc workers");
-        return 1;
-    }
-    mkdir("/tmp/vcs_repos",0777);
-    for (int i = 0; i < config.max_workers; i++) {
-        spawn_worker(i);
-        sleep(1);  // даём время на запуск
-    }
-    signal(SIGINT,sigint_sigterm_handler);
-    signal(SIGTERM,sigint_sigterm_handler);
-
-
-    printf("INFO Server fully started with %d workers\n", config.max_workers);
-    
-    while (running) {
-        sleep(5); 
-        int alive_workers = 0;
-        for (int i = 0; i < config.max_workers; i++) {
-            if (workers[i] > 0) {
-                if (kill(workers[i], 0) == 0) {
-                    alive_workers++;
-                } else {
-                    printf("WARN Worker %d (PID %d) died, respawning", i, workers[i]);
-                    spawn_worker(i);
-                }
+    //switch(fork()){
+        //case 0:
+            configFile = argv[1];
+            config=read_config(configFile);
+            //логирование
+            int logfd=open(config.logfile,O_WRONLY|O_CREAT,0666);
+            if(logfd<0){
+                perror("open");
             }
-        }
-        cleanup_expired_locks();
-        if (alive_workers == 0) {
-            printf("ERROR No alive workers, restarting all\n");
+            //dup2(logfd,STDOUT_FILENO);
+            //dup2(logfd,STDERR_FILENO);
+            sem_id = semget(IPC_EXCL, 2, 0666 | IPC_CREAT);
+
+            union semun arg; 
+            arg.val = 1;      
+            semctl(sem_id, 0, SETVAL, arg);
+            semctl(sem_id, 1, SETVAL, arg);
+            shm_id = shmget(IPC_EXCL,sizeof(struct MainStruct),IPC_CREAT|0666);
+            if (shm_id == -1) {
+                perror("shmget");
+                exit(1);
+            }
+            
+            mainstr= shmat(shm_id, NULL, 0);
+            if (mainstr == (struct MainStruct *)(-1)) {
+                perror("shmat");
+                exit(1);
+            }
+
+            struct sockaddr_in addr;
+            server_sock = socket(AF_INET, SOCK_STREAM, 0);
+            if (server_sock < 0) {
+                perror("socket");
+                return 1;
+            }
+            int opt = 1;
+            setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(config.port);
+            addr.sin_addr.s_addr = INADDR_ANY;
+            if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+                perror("bind");
+                return 1;
+            }
+            if (listen(server_sock, 10) < 0) {
+                perror("listen");
+                return 1;
+            }
+            workers = calloc(config.max_workers, sizeof(pid_t));
+            if (!workers) {
+                perror("calloc workers");
+                return 1;
+            }
+            mkdir("/tmp/vcs_repos",0777);
             for (int i = 0; i < config.max_workers; i++) {
                 spawn_worker(i);
+                sleep(1);  // даём время на запуск
             }
-        }
-    }
-    printf("INFO Master process exiting\n");
-    return 0;
+            signal(SIGINT,sigint_sigterm_handler);
+            signal(SIGTERM,sigint_sigterm_handler);
+
+            printf("INFO Server fully started with %d workers\n", config.max_workers);
+            
+            while (running) {
+                sleep(5); 
+                int alive_workers = 0;
+                for (int i = 0; i < config.max_workers; i++) {
+                    if (workers[i] > 0) {
+                        if (kill(workers[i], 0) == 0) {
+                            alive_workers++;
+                        } else {
+                            printf("WARN Worker %d (PID %d) died, respawning", i, workers[i]);
+                            spawn_worker(i);
+                        }
+                    }
+                }
+                cleanup_expired_locks();
+                if (alive_workers == 0) {
+                    printf("ERROR No alive workers, restarting all\n");
+                    for (int i = 0; i < config.max_workers; i++) {
+                        spawn_worker(i);
+                    }
+                }
+            }
+            printf("INFO Master process exiting\n");
+            return 0;
+            //break;
+        //default:
+            //exit(0);
+    //}
 }
 void spawn_worker(int worker_id) {
     pid_t pid = fork();
     if (pid == 0) { //child-worker
+        
         worker_loop(worker_id);
         exit(0);
     } 

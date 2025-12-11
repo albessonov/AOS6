@@ -1,1 +1,81 @@
-bind: Address already in use
+serv sock main: 4
+INFO Spawned worker 0 (PID 196637)
+INFO Worker 0 (PID 196637) started
+INFO Spawned worker 1 (PID 196663)
+INFO Worker 1 (PID 196663) started
+INFO Spawned worker 2 (PID 196673)
+INFO Worker 2 (PID 196673) started
+INFO Spawned worker 3 (PID 196704)
+INFO Worker 3 (PID 196704) started
+INFO Server fully started with 4 workers
+INFO Worker 0: client 127.0.0.1: 34012 connected
+COMMAND Worker 0 received: 'INIT myrepo3'
+OK: Repository 'myrepo3' created (ID: 0)
+SUCCESS Command 'INIT' completed by worker 0
+INFO Worker 0: client disconnected
+INFO Worker 0: connection closed
+INFO Worker 1: client 127.0.0.1: 40130 connected
+COMMAND Worker 1 received: 'ADD myrepo2 config.conf'
+ERROR: Repository 'myrepo2' not found
+ERROR Command 'ADD' failed (worker 1)
+INFO Worker 1: client disconnected
+INFO Worker 1: connection closed
+INFO Worker 2: client 127.0.0.1: 40134 connected
+COMMAND Worker 2 received: 'ADD myrepo2 config.conf'
+ERROR: Repository 'myrepo2' not found
+ERROR Command 'ADD' failed (worker 2)
+INFO Worker 2: client disconnected
+INFO Worker 2: connection closed
+INFO Worker 3: client 127.0.0.1: 54386 connected
+COMMAND Worker 3 received: 'ADD myrepo config.conf'
+ERROR: Repository 'myrepo' not found
+ERROR Command 'ADD' failed (worker 3)
+INFO Worker 3: client disconnected
+INFO Worker 3: connection closed
+INFO Worker 0: client 127.0.0.1: 54388 connected
+COMMAND Worker 0 received: 'INIT myrepo'
+OK: Repository 'myrepo' created (ID: 1)
+SUCCESS Command 'INIT' completed by worker 0
+INFO Worker 0: client disconnected
+INFO Worker 0: connection closed
+INFO Worker 1: client 127.0.0.1: 54404 connected
+COMMAND Worker 1 received: 'ADD myrepo config.conf'
+OK: 'config.conf' registered in staging (slot 0)
+SUCCESS Command 'ADD' completed by worker 1
+COMMAND Worker 1 received: 'COMMIT myrepo "msg" alex'
+COMMIT_START: 1 files, version 0
+FILE_OK: config.conf (63 bytes)
+COMMIT_OK: Version 0 created (1 files, 63 bytes)
+SUCCESS Command 'COMMIT' completed by worker 1
+INFO Worker 1: client disconnected
+INFO Worker 1: connection closed
+INFO Worker 2: client 127.0.0.1: 51252 connected
+COMMAND Worker 2 received: 'LOG myrepo'
+Commit number 0. Author:alex. Commit message:"msg"
+
+SUCCESS Command 'LOG' completed by worker 2
+INFO Worker 2: client disconnected
+INFO Worker 2: connection closed
+INFO Worker 3: client 127.0.0.1: 59160 connected
+COMMAND Worker 3 received: 'SHOW myrepo 0'
+OK: Version #0 in 'myrepo'
+ Author: alex
+ Message: "msg"
+ Timestamp: Thu Dec 11 17:02:39 2025
+
+ Parent: -1
+
+SUCCESS Command 'SHOW' completed by worker 3
+INFO Worker 3: client disconnected
+INFO Worker 3: connection closed
+INFO Worker 0: client 127.0.0.1: 46240 connected
+COMMAND Worker 0 received: 'INIT myrepo2'
+OK: Repository 'myrepo2' created (ID: 2)
+SUCCESS Command 'INIT' completed by worker 0
+INFO Worker 0: client disconnected
+INFO Worker 0: connection closed
+INFO  Starting cleanup...
+INFO Detaching SHM 65549
+INFO Removing SHM 65549
+INFO Removing semaphores 13
+INFO Cleanup completed successfully

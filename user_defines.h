@@ -45,7 +45,7 @@ struct Repository  {
     struct StagingFile staging[MAX_STAGING_FILES]; 
     time_t create_time;
     uint8_t active_locks;
-    bool used; //1 if current array idx is busy
+    bool used; 
 };
 struct MainStruct{
     struct Repository repositories[MAX_REPOS];
